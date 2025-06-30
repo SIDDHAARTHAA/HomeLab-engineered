@@ -53,20 +53,16 @@ export default function App() {
   const [storage, setStorage] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [view, setView] = useState("grid"); // "grid" or "list"
+  const [currentPath, setCurrentPath] = useState([]);
   const fileInputRef = useRef();
   const prevFilesRef = useRef([]);
   const prevStorageRef = useRef(null);
 
   // Fetch files on mount and after upload
   const fetchFiles = () => {
-    fetch(`${API}/list`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (JSON.stringify(prevFilesRef.current) !== JSON.stringify(data)) {
-          setFiles(data);
-          prevFilesRef.current = data;
-        }
-      })
+    fetch(`${API}/list?path=${encodeURIComponent(currentPath.join("/"))}`)
+      .then(res => res.json())
+      .then(data => setFiles(data))
       .catch(() => setFiles([]));
   };
 
@@ -216,8 +212,20 @@ export default function App() {
   // Dummy breadcrumb
   function Breadcrumb() {
     return (
-      <nav className="text-gray-500 text-sm font-medium">
-        Home / PublicStorage
+      <nav className="text-gray-500 text-sm font-medium flex gap-1 items-center">
+        <span
+          className="cursor-pointer hover:underline"
+          onClick={() => setCurrentPath([])}
+        >Home</span>
+        {currentPath.map((seg, idx) => (
+          <span key={idx} className="flex items-center gap-1">
+            <span>/</span>
+            <span
+              className="cursor-pointer hover:underline"
+              onClick={() => setCurrentPath(currentPath.slice(0, idx + 1))}
+            >{seg}</span>
+          </span>
+        ))}
       </nav>
     );
   }
@@ -350,11 +358,102 @@ export default function App() {
     );
   }
 
+  function CreateFolderButton() {
+    const [open, setOpen] = useState(false);
+    const [folderName, setFolderName] = useState("");
+    const handleCreate = async () => {
+      if (!folderName) return;
+      const res = await fetch(`${API}/mkdir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: currentPath.join("/"), name: folderName }),
+      });
+      if (res.ok) {
+        toast.success("Folder created!");
+        fetchFiles();
+        setOpen(false);
+        setFolderName("");
+      } else {
+        toast.error("Failed to create folder");
+      }
+    };
+    return (
+      <>
+        <button
+          className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-500"
+          onClick={() => setOpen(true)}
+        >Create Folder</button>
+        {open && (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded shadow flex flex-col gap-2">
+              <input
+                className="border px-2 py-1 rounded"
+                placeholder="Folder name"
+                value={folderName}
+                onChange={e => setFolderName(e.target.value)}
+                autoFocus
+              />
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setOpen(false)} className="px-3 py-1">Cancel</button>
+                <button onClick={handleCreate} className="bg-green-600 text-white px-3 py-1 rounded">Create</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  function RenameButton({ entry }) {
+    const [open, setOpen] = useState(false);
+    const [newName, setNewName] = useState(entry.name);
+    const handleRename = async () => {
+      if (!newName || newName === entry.name) return;
+      const res = await fetch(`${API}/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: currentPath.join("/"),
+          oldName: entry.name,
+          newName,
+        }),
+      });
+      if (res.ok) {
+        toast.success("Renamed!");
+        fetchFiles();
+        setOpen(false);
+      } else {
+        toast.error("Rename failed");
+      }
+    };
+    return (
+      <>
+        <button onClick={() => setOpen(true)} className="ml-2 text-xs text-blue-600 underline">Rename</button>
+        {open && (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded shadow flex flex-col gap-2">
+              <input
+                className="border px-2 py-1 rounded"
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                autoFocus
+              />
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setOpen(false)} className="px-3 py-1">Cancel</button>
+                <button onClick={handleRename} className="bg-blue-600 text-white px-3 py-1 rounded">Rename</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center px-2 py-4">
       <Toaster />
       <div className="w-full max-w-screen-lg">
-        <div className="flex flex-col md:flex-row items-center gap-4 mb-6 w-full">
+        <div className="flex flex-col md:flex-row items-center gap-4 mb-6 w-full sticky top-0 z-20 bg-gray-100 pt-4 pb-2">
           <button
             onClick={() => fileInputRef.current.click()}
             className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-500"
@@ -363,6 +462,7 @@ export default function App() {
           >
             {uploading ? "Uploading..." : "Upload Files"}
           </button>
+          <CreateFolderButton />
           <input
             type="file"
             multiple

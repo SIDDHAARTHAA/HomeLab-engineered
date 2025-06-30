@@ -4,6 +4,7 @@ const fs = require('fs');
 const fsp = require('fs').promises; // Add this line
 const path = require('path');
 const cors = require('cors');
+const archiver = require('archiver'); // npm install archiver
 require('dotenv').config();
 
 const app = express();
@@ -76,9 +77,14 @@ function formatBytes(bytes) {
 // List files end point
 //working/understood
 app.get('/list', (req, res) => {
-  fs.readdir(folderPath, (err, files) => {
+  const relPath = req.query.path || "";
+  const absPath = path.join(folderPath, relPath);
+  fs.readdir(absPath, { withFileTypes: true }, (err, entries) => {
     if (err) return res.status(500).send('Error reading directory');
-    res.json(files);
+    res.json(entries.map(entry => ({
+      name: entry.name,
+      isDirectory: entry.isDirectory()
+    })));
   });
 });
 
@@ -89,9 +95,19 @@ app.post('/upload', upload.array('files', 100), (req, res) => {
 
 //Download file
 app.get('/download/:filename', (req, res) => {
-  const file = path.join(folderPath, req.params.filename);
-  if (!fs.existsSync(file)) return res.status(404).send('File not found');
-  res.download(file);
+  const relPath = req.query.path || "";
+  const filename = req.params.filename;
+  const absPath = path.join(folderPath, relPath, filename);
+  if (!fs.existsSync(absPath)) return res.status(404).send('File not found');
+  if (fs.lstatSync(absPath).isDirectory()) {
+    res.attachment(filename + ".zip");
+    const archive = archiver('zip');
+    archive.directory(absPath, false);
+    archive.pipe(res);
+    archive.finalize();
+  } else {
+    res.download(absPath);
+  }
 });
 
 app.get('/storage', async (req, res) => {
@@ -122,6 +138,29 @@ app.delete('/delete/:filename', async (req, res) => {
     console.error("Delete error:", err);
     res.status(500).json({ error: "Failed to delete file" });
   }
+});
+app.post('/mkdir', (req, res) => {
+  const { path: relPath, name } = req.body;
+  if (!name || name.includes("..") || name.includes("/")) {
+    return res.status(400).json({ error: "Invalid folder name" });
+  }
+  const absPath = path.join(folderPath, relPath || "", name);
+  fs.mkdir(absPath, { recursive: false }, (err) => {
+    if (err) return res.status(500).json({ error: "Failed to create folder" });
+    res.json({ message: "Folder created" });
+  });
+});
+app.post('/rename', (req, res) => {
+  const { path: relPath, oldName, newName } = req.body;
+  if (!oldName || !newName || oldName.includes("..") || newName.includes("..")) {
+    return res.status(400).json({ error: "Invalid name" });
+  }
+  const absOld = path.join(folderPath, relPath || "", oldName);
+  const absNew = path.join(folderPath, relPath || "", newName);
+  fs.rename(absOld, absNew, (err) => {
+    if (err) return res.status(500).json({ error: "Failed to rename" });
+    res.json({ message: "Renamed" });
+  });
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
