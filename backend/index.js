@@ -109,5 +109,19 @@ app.get('/storage', async (req, res) => {
     res.status(500).json({ error: 'Failed to calculate storage.' });
   }
 });
+app.delete('/delete/:filename', async (req, res) => {
+  try {
+    const filename = req.params.filename;
+    // Prevent directory traversal
+    if (filename.includes("..")) return res.status(400).json({ error: "Invalid filename" });
+    const file = path.join(folderPath, filename);
+    if (!fs.existsSync(file)) return res.status(404).json({ error: "File not found" });
+    await fsp.unlink(file);
+    res.json({ message: "File deleted successfully" });
+  } catch (err) {
+    console.error("Delete error:", err);
+    res.status(500).json({ error: "Failed to delete file" });
+  }
+});
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));

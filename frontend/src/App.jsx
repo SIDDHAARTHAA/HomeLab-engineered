@@ -11,21 +11,39 @@ import {
   Folder,
   FileArchive,
   Download,
+  List,
+  LayoutGrid,
+  FileText,
+  Trash2,
 } from "lucide-react";
+import toast, { Toaster } from "react-hot-toast";
 
 const API = import.meta.env.VITE_API;
 
 // Helper to get icon based on file type
 function getFileIcon(name) {
-  if (!name) return <File className="w-5 h-5 text-gray-400 flex-shrink-0 mr-2" />;
+  if (!name) return <File className="w-8 h-8 text-gray-400 flex-shrink-0" />;
   const ext = name.split(".").pop().toLowerCase();
-  if (name.endsWith("/")) return <Folder className="w-5 h-5 text-yellow-500 flex-shrink-0 mr-2" />;
-  if (["zip"].includes(ext)) return <FileArchive className="w-5 h-5 text-orange-500 flex-shrink-0 mr-2" />;
+  if (name.endsWith("/")) return <Folder className="w-8 h-8 text-yellow-500 flex-shrink-0" />;
+  if (["zip","rar"].includes(ext)) return <FileArchive className="w-8 h-8 text-orange-500 flex-shrink-0" />;
+  if (["pdf"].includes(ext)) return <FileText className="w-8 h-8 text-red-500 flex-shrink-0" />;
   if (["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"].includes(ext))
-    return <FileImage className="w-5 h-5 text-blue-400 flex-shrink-0 mr-2" />;
+    return <FileImage className="w-8 h-8 text-blue-400 flex-shrink-0" />;
   if (["mp4", "mkv", "avi", "mov", "webm"].includes(ext))
-    return <FileVideo className="w-5 h-5 text-purple-400 flex-shrink-0 mr-2" />;
-  return <File className="w-5 h-5 text-gray-400 flex-shrink-0 mr-2" />;
+    return <FileVideo className="w-8 h-8 text-purple-400 flex-shrink-0" />;
+  return <File className="w-8 h-8 text-gray-400 flex-shrink-0" />;
+}
+
+// Helper to check if file is image
+function isImage(name) {
+  const ext = name.split(".").pop().toLowerCase();
+  return ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"].includes(ext);
+}
+
+// Helper to check if file is video
+function isVideo(name) {
+  const ext = name.split(".").pop().toLowerCase();
+  return ["mp4", "mkv", "avi", "mov", "webm"].includes(ext);
 }
 
 export default function App() {
@@ -33,13 +51,22 @@ export default function App() {
   const [sortBy, setSortBy] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
   const [storage, setStorage] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [view, setView] = useState("grid"); // "grid" or "list"
   const fileInputRef = useRef();
+  const prevFilesRef = useRef([]);
+  const prevStorageRef = useRef(null);
 
   // Fetch files on mount and after upload
   const fetchFiles = () => {
     fetch(`${API}/list`)
       .then((res) => res.json())
-      .then((data) => setFiles(data))
+      .then((data) => {
+        if (JSON.stringify(prevFilesRef.current) !== JSON.stringify(data)) {
+          setFiles(data);
+          prevFilesRef.current = data;
+        }
+      })
       .catch(() => setFiles([]));
   };
 
@@ -47,7 +74,12 @@ export default function App() {
   const fetchStorage = () => {
     fetch(`${API}/storage`)
       .then((res) => res.json())
-      .then((data) => setStorage(data));
+      .then((data) => {
+        if (JSON.stringify(prevStorageRef.current) !== JSON.stringify(data)) {
+          setStorage(data);
+          prevStorageRef.current = data;
+        }
+      });
   };
 
   useEffect(() => {
@@ -56,13 +88,17 @@ export default function App() {
     const interval = setInterval(() => {
       fetchFiles();
       fetchStorage();
-    }, 5000);
+    }, 10000);
     return () => clearInterval(interval);
   }, []);
 
   const handleUpload = async (e) => {
     const selected = Array.from(e.target.files);
     if (selected.length === 0) return;
+
+    setUploading(true);
+    const toastId = toast.loading("Uploading files... Please do not refresh.");
+    window.onbeforeunload = () => "Upload in progress. Are you sure you want to leave?";
 
     const formData = new FormData();
     for (let file of selected) formData.append("files", file);
@@ -71,6 +107,10 @@ export default function App() {
       method: "POST",
       body: formData,
     });
+
+    setUploading(false);
+    window.onbeforeunload = null;
+    toast.success("Upload complete!", { id: toastId });
 
     fetchFiles();
     fetchStorage();
@@ -121,6 +161,25 @@ export default function App() {
     window.open(`${API}/download/${encodeURIComponent(filename)}`, "_blank");
   };
 
+  // Delete handler
+  const handleDelete = async (filename) => {
+    if (!window.confirm(`Delete ${filename}?`)) return;
+    const toastId = toast.loading("Deleting...");
+    try {
+      const res = await fetch(`${API}/delete/${encodeURIComponent(filename)}`, { method: "DELETE" });
+      if (res.ok) {
+        toast.success("File deleted!", { id: toastId });
+        fetchFiles();
+        fetchStorage();
+      } else {
+        const data = await res.json();
+        toast.error(data.error || "Delete failed", { id: toastId });
+      }
+    } catch (err) {
+      toast.error("Delete failed", { id: toastId });
+    }
+  };
+
   // Storage bar
   function StorageBar() {
     if (!storage) return null;
@@ -154,16 +213,155 @@ export default function App() {
     );
   }
 
+  // Dummy breadcrumb
+  function Breadcrumb() {
+    return (
+      <nav className="text-gray-500 text-sm font-medium">
+        Home / PublicStorage
+      </nav>
+    );
+  }
+
+  // Toggle button
+  function ViewToggle() {
+    return (
+      <div className="flex items-center gap-1 bg-gray-100 rounded-full border border-gray-300 overflow-hidden">
+        <button
+          className={`px-3 py-1 flex items-center gap-1 text-sm ${
+            view === "list" ? "bg-blue-100 text-blue-700" : "hover:bg-gray-200"
+          }`}
+          onClick={() => setView("list")}
+        >
+          <List className="w-4 h-4" />
+        </button>
+        <button
+          className={`px-3 py-1 flex items-center gap-1 text-sm ${
+            view === "grid" ? "bg-blue-100 text-blue-700" : "hover:bg-gray-200"
+          }`}
+          onClick={() => setView("grid")}
+        >
+          <LayoutGrid className="w-4 h-4" />
+        </button>
+      </div>
+    );
+  }
+
+  // Grid view
+  function GridView() {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 py-4">
+        {sortedFiles.map((file, idx) => (
+          <div
+            key={idx}
+            className="bg-white rounded-lg shadow flex flex-col items-center p-3 relative group"
+          >
+            {/* Top: Icon or preview */}
+            <div className="w-full flex flex-col items-center">
+              {isImage(file) ? (
+                <img
+                  src={`${API}/download/${encodeURIComponent(file)}`}
+                  alt={file}
+                  className="w-16 h-16 object-cover rounded mb-2 border"
+                  loading="lazy"
+                />
+              ) : isVideo(file) ? (
+                <video
+                  src={`${API}/download/${encodeURIComponent(file)}`}
+                  className="w-16 h-16 object-cover rounded mb-2 border"
+                  muted
+                  preload="metadata"
+                  controls={false}
+                />
+              ) : (
+                <div className="w-16 h-16 flex items-center justify-center bg-gray-100 rounded mb-2 border">
+                  {getFileIcon(file)}
+                </div>
+              )}
+            </div>
+            {/* Name */}
+            <div
+              className="w-full text-xs font-medium text-center truncate"
+              title={file}
+              style={{ maxWidth: "100%" }}
+            >
+              {file}
+            </div>
+            {/* Download button top right */}
+            <button
+              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition"
+              title="Download"
+              onClick={() => handleDownload(file)}
+            >
+              <Download className="w-5 h-5 text-gray-600 hover:text-blue-600" />
+            </button>
+            {/* Delete button top left */}
+            <button
+              className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition"
+              title="Delete"
+              onClick={() => handleDelete(file)}
+            >
+              <Trash2 className="w-5 h-5 text-red-600 hover:text-red-800" />
+            </button>
+            {/* Size bottom */}
+            <div className="w-full text-xs text-gray-500 text-center mt-2">
+              {fileSizes[file] !== undefined ? formatBytes(fileSizes[file]) : ""}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // List view (same as before)
+  function ListView() {
+    return (
+      <div className="flex flex-col gap-1">
+        {sortedFiles.map((file, idx) => (
+          <div
+            key={idx}
+            className="grid grid-cols-[3fr_1fr_40px] md:grid-cols-[3fr_1fr_40px] items-center border-b py-2 text-left"
+          >
+            <span
+              className="flex items-center gap-2 min-w-0"
+              title={file}
+              style={{
+                fontSize: "0.98rem",
+                wordBreak: "break-all",
+              }}
+            >
+              {getFileIcon(file)}
+              <span className="truncate flex-1 min-w-0 max-w-full">{file}</span>
+            </span>
+            <span>
+              {fileSizes[file] !== undefined
+                ? formatBytes(fileSizes[file])
+                : ""}
+            </span>
+            <button
+              className="justify-self-end px-2 py-1"
+              title="Download"
+              onClick={() => handleDownload(file)}
+            >
+              <Download className="w-5 h-5 text-gray-600 hover:text-blue-600" />
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center px-2 py-4">
+      <Toaster />
       <div className="w-full max-w-screen-lg">
         <div className="flex flex-col md:flex-row items-center gap-4 mb-6 w-full">
           <button
             onClick={() => fileInputRef.current.click()}
             className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-500"
             style={{ height: "2.5rem" }}
+            disabled={uploading}
           >
-            Upload Files
+            {uploading ? "Uploading..." : "Upload Files"}
           </button>
           <input
             type="file"
@@ -177,9 +375,16 @@ export default function App() {
             <StorageBar />
           </div>
         </div>
+        {/* Breadcrumb and toggle */}
+        <div className="flex items-center justify-between mb-2">
+          <Breadcrumb />
+          <ViewToggle />
+        </div>
         <div className="bg-white p-2 md:p-4 rounded shadow mt-2">
           {files.length === 0 ? (
             <p className="text-sm text-gray-400 text-center">no files</p>
+          ) : view === "grid" ? (
+            <GridView />
           ) : (
             <>
               {/* Header */}
@@ -238,39 +443,7 @@ export default function App() {
                 </button>
                 <div></div>
               </div>
-              {/* Rows */}
-              <div className="flex flex-col gap-1">
-                {sortedFiles.map((file, idx) => (
-                  <div
-                    key={idx}
-                    className="grid grid-cols-[3fr_1fr_40px] md:grid-cols-[3fr_1fr_40px] items-center border-b py-2 text-left"
-                  >
-                    <span
-                      className="flex items-center gap-2 min-w-0"
-                      title={file}
-                      style={{
-                        fontSize: "0.98rem",
-                        wordBreak: "break-all",
-                      }}
-                    >
-                      {getFileIcon(file)}
-                      <span className="truncate flex-1 min-w-0 max-w-full">{file}</span>
-                    </span>
-                    <span>
-                      {fileSizes[file] !== undefined
-                        ? formatBytes(fileSizes[file])
-                        : ""}
-                    </span>
-                    <button
-                      className="justify-self-end px-2 py-1"
-                      title="Download"
-                      onClick={() => handleDownload(file)}
-                    >
-                      <Download className="w-5 h-5 text-gray-600 hover:text-blue-600" />
-                    </button>
-                  </div>
-                ))}
-              </div>
+              <ListView />
             </>
           )}
         </div>
