@@ -21,11 +21,11 @@ import toast, { Toaster } from "react-hot-toast";
 const API = import.meta.env.VITE_API;
 
 // Helper to get icon based on file type
-function getFileIcon(name) {
-  if (!name) return <File className="w-8 h-8 text-gray-400 flex-shrink-0" />;
+function getFileIcon(file) {
+  if (file.isDirectory) return <Folder className="w-8 h-8 text-yellow-500 flex-shrink-0" />;
+  const name = file.name;
   const ext = name.split(".").pop().toLowerCase();
-  if (name.endsWith("/")) return <Folder className="w-8 h-8 text-yellow-500 flex-shrink-0" />;
-  if (["zip","rar"].includes(ext)) return <FileArchive className="w-8 h-8 text-orange-500 flex-shrink-0" />;
+  if (["zip", "rar"].includes(ext)) return <FileArchive className="w-8 h-8 text-orange-500 flex-shrink-0" />;
   if (["pdf"].includes(ext)) return <FileText className="w-8 h-8 text-red-500 flex-shrink-0" />;
   if (["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"].includes(ext))
     return <FileImage className="w-8 h-8 text-blue-400 flex-shrink-0" />;
@@ -35,14 +35,16 @@ function getFileIcon(name) {
 }
 
 // Helper to check if file is image
-function isImage(name) {
-  const ext = name.split(".").pop().toLowerCase();
+function isImage(file) {
+  if (file.isDirectory) return false;
+  const ext = file.name.split(".").pop().toLowerCase();
   return ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"].includes(ext);
 }
 
 // Helper to check if file is video
-function isVideo(name) {
-  const ext = name.split(".").pop().toLowerCase();
+function isVideo(file) {
+  if (file.isDirectory) return false;
+  const ext = file.name.split(".").pop().toLowerCase();
   return ["mp4", "mkv", "avi", "mov", "webm"].includes(ext);
 }
 
@@ -119,11 +121,13 @@ export default function App() {
     // Fetch all file sizes in parallel
     const fetchSizes = async () => {
       const entries = await Promise.all(
-        files.map(async (file) => {
-          const res = await fetch(`${API}/download/${file}`, { method: "HEAD" });
-          const bytes = res.headers.get("content-length");
-          return [file, bytes ? Number(bytes) : 0];
-        })
+        files
+          .filter(file => !file.isDirectory)
+          .map(async (file) => {
+            const res = await fetch(`${API}/download/${encodeURIComponent(file.name)}?path=${encodeURIComponent(currentPath.join("/"))}`, { method: "HEAD" });
+            const bytes = res.headers.get("content-length");
+            return [file.name, bytes ? Number(bytes) : 0];
+          })
       );
       setFileSizes(Object.fromEntries(entries));
     };
@@ -132,12 +136,12 @@ export default function App() {
 
   const sortedFiles = [...files].sort((a, b) => {
     if (sortBy === "name") {
-      if (sortDir === "asc") return a.localeCompare(b);
-      else return b.localeCompare(a);
+      if (sortDir === "asc") return a.name.localeCompare(b.name);
+      else return b.name.localeCompare(a.name);
     }
     if (sortBy === "size") {
-      const sizeA = fileSizes[a] || 0;
-      const sizeB = fileSizes[b] || 0;
+      const sizeA = fileSizes[a.name] || 0;
+      const sizeB = fileSizes[b.name] || 0;
       if (sortDir === "asc") return sizeA - sizeB;
       else return sizeB - sizeA;
     }
@@ -260,21 +264,28 @@ export default function App() {
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 py-4">
         {sortedFiles.map((file, idx) => (
           <div
-            key={idx}
+            key={file.name}
             className="bg-white rounded-lg shadow flex flex-col items-center p-3 relative group"
           >
-            {/* Top: Icon or preview */}
             <div className="w-full flex flex-col items-center">
-              {isImage(file) ? (
+              {file.isDirectory ? (
+                <div
+                  className="w-16 h-16 flex items-center justify-center bg-gray-100 rounded mb-2 border cursor-pointer"
+                  onClick={() => setCurrentPath([...currentPath, file.name])}
+                  title="Open folder"
+                >
+                  <Folder className="w-10 h-10 text-yellow-500" />
+                </div>
+              ) : isImage(file) ? (
                 <img
-                  src={`${API}/download/${encodeURIComponent(file)}`}
-                  alt={file}
+                  src={`${API}/download/${encodeURIComponent(file.name)}?path=${encodeURIComponent(currentPath.join("/"))}`}
+                  alt={file.name}
                   className="w-16 h-16 object-cover rounded mb-2 border"
                   loading="lazy"
                 />
               ) : isVideo(file) ? (
                 <video
-                  src={`${API}/download/${encodeURIComponent(file)}`}
+                  src={`${API}/download/${encodeURIComponent(file.name)}?path=${encodeURIComponent(currentPath.join("/"))}`}
                   className="w-16 h-16 object-cover rounded mb-2 border"
                   muted
                   preload="metadata"
@@ -289,30 +300,35 @@ export default function App() {
             {/* Name */}
             <div
               className="w-full text-xs font-medium text-center truncate"
-              title={file}
+              title={file.name}
               style={{ maxWidth: "100%" }}
             >
-              {file}
+              {file.name}
             </div>
-            {/* Download button top right */}
-            <button
-              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition"
-              title="Download"
-              onClick={() => handleDownload(file)}
-            >
-              <Download className="w-5 h-5 text-gray-600 hover:text-blue-600" />
-            </button>
-            {/* Delete button top left */}
-            <button
-              className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition"
-              title="Delete"
-              onClick={() => handleDelete(file)}
-            >
-              <Trash2 className="w-5 h-5 text-red-600 hover:text-red-800" />
-            </button>
+            {/* Download and Delete only for files */}
+            {!file.isDirectory && (
+              <>
+                <button
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition"
+                  title="Download"
+                  onClick={() => handleDownload(file.name)}
+                >
+                  <Download className="w-5 h-5 text-gray-600 hover:text-blue-600" />
+                </button>
+                <button
+                  className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition"
+                  title="Delete"
+                  onClick={() => handleDelete(file.name)}
+                >
+                  <Trash2 className="w-5 h-5 text-red-600 hover:text-red-800" />
+                </button>
+              </>
+            )}
             {/* Size bottom */}
             <div className="w-full text-xs text-gray-500 text-center mt-2">
-              {fileSizes[file] !== undefined ? formatBytes(fileSizes[file]) : ""}
+              {!file.isDirectory && fileSizes[file.name] !== undefined
+                ? formatBytes(fileSizes[file.name])
+                : ""}
             </div>
           </div>
         ))}
@@ -326,32 +342,43 @@ export default function App() {
       <div className="flex flex-col gap-1">
         {sortedFiles.map((file, idx) => (
           <div
-            key={idx}
+            key={file.name}
             className="grid grid-cols-[3fr_1fr_40px] md:grid-cols-[3fr_1fr_40px] items-center border-b py-2 text-left"
           >
             <span
               className="flex items-center gap-2 min-w-0"
-              title={file}
+              title={file.name}
               style={{
                 fontSize: "0.98rem",
                 wordBreak: "break-all",
               }}
             >
               {getFileIcon(file)}
-              <span className="truncate flex-1 min-w-0 max-w-full">{file}</span>
+              {file.isDirectory ? (
+                <span
+                  className="truncate flex-1 min-w-0 max-w-full cursor-pointer text-blue-700 hover:underline"
+                  onClick={() => setCurrentPath([...currentPath, file.name])}
+                >
+                  {file.name}
+                </span>
+              ) : (
+                <span className="truncate flex-1 min-w-0 max-w-full">{file.name}</span>
+              )}
             </span>
             <span>
-              {fileSizes[file] !== undefined
-                ? formatBytes(fileSizes[file])
+              {!file.isDirectory && fileSizes[file.name] !== undefined
+                ? formatBytes(fileSizes[file.name])
                 : ""}
             </span>
-            <button
-              className="justify-self-end px-2 py-1"
-              title="Download"
-              onClick={() => handleDownload(file)}
-            >
-              <Download className="w-5 h-5 text-gray-600 hover:text-blue-600" />
-            </button>
+            {!file.isDirectory && (
+              <button
+                className="justify-self-end px-2 py-1"
+                title="Download"
+                onClick={() => handleDownload(file.name)}
+              >
+                <Download className="w-5 h-5 text-gray-600 hover:text-blue-600" />
+              </button>
+            )}
           </div>
         ))}
       </div>
